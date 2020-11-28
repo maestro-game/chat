@@ -5,68 +5,39 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
-import java.util.concurrent.*;
 
 public class Server extends Thread {
     private ServerSocket serverSocket;
-    private ThreadPoolExecutor threadPool;
-    private static final int AUTH_TIMEOUT = 10000; //ms
-    //TODO must have proper sequence iterator
-    private BlockingQueue<Runnable> queue;
+    private static final int AUTH_TIMEOUT = 500; //ms
+
+    private final HashMap<String, Room> rooms;
+    private Room defaultRoom;
 
     private static final Map<String, String> database = new HashMap<>();
 
     static {
-        database.put("Vadim", "password");
-        database.put("Helper", "i need help");
-        database.put("Hater", "hate you");
-        database.put("Me", "who am i?");
+        database.put("u1", "p1");
+        database.put("u2", "p2");
+        database.put("u3", "p3");
+        database.put("u4", "p4");
     }
 
     //TODO add more settings?
-    public Server(int port, int maximumUsersAmount, int queueLength, int extra) {
-        RejectedExecutionHandler handler = (r, executor) -> {
-            ((ClientHandler)r).sendQueueOverflow();
-        };
+    public Server(int port, int queueLength, String baseRoomName, int queueLengthForRoom, int maximumUsersAmount) {
         try {
-            serverSocket = new ServerSocket(port, maximumUsersAmount + queueLength);
-
+            serverSocket = new ServerSocket(port, queueLength);
         } catch (IOException e) {
             throw new IllegalArgumentException(e);
         }
-        queue = new LinkedBlockingQueue<>(queueLength);
-        threadPool = new ThreadPoolExecutor(maximumUsersAmount,
-                maximumUsersAmount,
-                10,
-                TimeUnit.MINUTES,
-                queue,
-                handler);
+        rooms = new HashMap<>();
+        addRoom(baseRoomName, queueLengthForRoom, maximumUsersAmount, true);
     }
 
     //TODO send state-codes, not strings
     @Override
     public void run() {
         System.out.println("server started");
-        Thread queueChecker = new Thread(() -> {
-            while (true) {
-                long start = System.currentTimeMillis();
-                Iterator<Runnable> it = queue.iterator();
-                int queueNum = 1;
-                while (it.hasNext()) {
-                    ClientHandler handler = ((ClientHandler) it.next());
-                    if (handler.getState() == State.NEW) {
-                        handler.sendQueueNum(queueNum++);
-                    }
-                }
-                try {
-                    sleep(start + 5000 - System.currentTimeMillis());
-                } catch (Exception ignored) {
-                }
-            }
-        });
-        queueChecker.start();
 
         while (!isInterrupted()) {
             Socket socket = null;
@@ -82,6 +53,7 @@ public class Server extends Thread {
 
                 String login = null;
                 String password = null;
+                String roomName = null;
 
                 while (!in.ready() || (login = in.readLine()) == null) {
                     if (System.currentTimeMillis() - startTime > AUTH_TIMEOUT) {
@@ -104,15 +76,25 @@ public class Server extends Thread {
                     out.println("Время ожидания аутентификации истекло.");
                     throw new IOException("Время ожидания аутентификации истекло.");
                 }
-
                 //TODO attach database
-                if (password.equals(database.get(login))) {
-                    out.println("Вы успешно авторизованы.");
-                    threadPool.execute(new ClientHandler(new User(login), in, out, socket));
-                } else {
+                if (!password.equals(database.get(login))) {
                     out.println("Неверные данные для входа.");
                     throw new IOException("Неверные данные для входа.");
                 }
+                out.println("Вы успешно авторизованы.");
+
+                out.println("Комнаты:");
+                for (Room room : rooms.values()) {
+                    out.println("  " + room.getName() + " " + room.getUsersAmount() + "/" + room.getMaximumUsersAmount());
+                }
+
+                while (!in.ready() || (roomName = in.readLine()) == null) {
+                    if (System.currentTimeMillis() - startTime > AUTH_TIMEOUT) {
+                        if (in.ready()) roomName = in.readLine();
+                        break;
+                    }
+                }
+                (roomName == null ? defaultRoom : rooms.getOrDefault(roomName, defaultRoom)).attachClientHandler(new ClientHandler(new User(login), in, out, socket));
             } catch (IOException e) {
                 e.printStackTrace();
                 if (out != null) {
@@ -140,8 +122,21 @@ public class Server extends Thread {
         } catch (IOException e) {
             e.printStackTrace();
         }
-        queueChecker.interrupt();
-        threadPool.shutdownNow().forEach((a) -> ((ClientHandler) a).sendShutdownAndClose());
+        for (String name : rooms.keySet()) {
+            rooms.get(name).shutDown();
+        }
         System.out.println("server stopped");
+    }
+
+    public void addRoom(String name, int queueLength, int maximumUsersAmount, boolean defaulted) {
+        Room room = new Room(name, queueLength, maximumUsersAmount);
+        rooms.put(name, room);
+        if (defaulted || defaultRoom == null) {
+            defaultRoom = room;
+        }
+    }
+
+    public void closeRoom(String name) {
+        rooms.remove(name).shutDown();
     }
 }

@@ -5,13 +5,11 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class ClientHandler extends Thread {
+    private Room room;
+    private int localBufPos;
 
-    private static final int MES_BUF_SIZE = 30;
-    private static volatile int globalBufPos = 0;
-    private static final AtomicReferenceArray<Message> messageBuffer = new AtomicReferenceArray<>(MES_BUF_SIZE);
     private static List<ClientHandler> list = new LinkedList<>();
 
     private String closeMessage;
@@ -20,7 +18,9 @@ public class ClientHandler extends Thread {
     private final Socket socket;
     private final User user;
 
-    private int localBufPos;
+    public User getUser() {
+        return user;
+    }
 
     public ClientHandler(User user, BufferedReader in, PrintWriter out, Socket socket) {
         super("Thread-user-" + user.toString());
@@ -45,37 +45,26 @@ public class ClientHandler extends Thread {
     }
 
     private void sendHistory() {
-        synchronized (messageBuffer) {
-            localBufPos = globalBufPos + 1;
-            if (localBufPos == MES_BUF_SIZE) {
+        synchronized (room.messageBuffer) {
+            localBufPos = room.getBufPos() + 1;
+            if (localBufPos == room.MES_BUF_SIZE) {
                 localBufPos = 0;
             }
-            while (localBufPos != globalBufPos) {
-                if (messageBuffer.get(localBufPos) != null) {
-                    out.println(messageBuffer.get(localBufPos).toString());
+            while (localBufPos != room.getBufPos()) {
+                if (room.messageBuffer.get(localBufPos) != null) {
+                    out.println(room.messageBuffer.get(localBufPos).toString());
                 }
-                if (++localBufPos == MES_BUF_SIZE) {
+                if (++localBufPos == room.MES_BUF_SIZE) {
                     localBufPos = 0;
                 }
             }
         }
     }
 
-    private void generateSignalMessage(String message) {
-        synchronized (messageBuffer) {
-            messageBuffer.set(globalBufPos, new Message(message, user, true));
-            if (globalBufPos == MES_BUF_SIZE - 1) {
-                globalBufPos = 0;
-            } else {
-                globalBufPos++;
-            }
-        }
-    }
-
     private void actualizeMessages() {
-        while (localBufPos != globalBufPos) {
-            out.println(messageBuffer.get(localBufPos).toString());
-            if (++localBufPos == MES_BUF_SIZE) {
+        while (localBufPos != room.getBufPos()) {
+            out.println(room.messageBuffer.get(localBufPos).toString());
+            if (++localBufPos == room.MES_BUF_SIZE) {
                 localBufPos = 0;
             }
         }
@@ -98,7 +87,11 @@ public class ClientHandler extends Thread {
     @Override
     public void run() {
         out.println("Добро пожаловать в чат!");
-        generateSignalMessage("подключился к чату.");
+        out.println("Пользователи:");
+        for (User user : room.getUsers()) {
+            out.println("  " + user.getUsername());
+        }
+        room.generateMessage(user, "подключился к чату.", true);
         sendHistory();
         while (true) {
             try {
@@ -119,14 +112,7 @@ public class ClientHandler extends Thread {
                                 if (text.charAt(0) == '#') {
                                     //TODO spec fun
                                 } else {
-                                    synchronized (messageBuffer) {
-                                        messageBuffer.set(globalBufPos, new Message(text, user));
-                                        if (globalBufPos == MES_BUF_SIZE - 1) {
-                                            globalBufPos = 0;
-                                        } else {
-                                            globalBufPos++;
-                                        }
-                                    }
+                                    room.generateMessage(user, text);
                                 }
                             }
                         }
@@ -148,6 +134,6 @@ public class ClientHandler extends Thread {
         }
         System.out.println("disconnected " + user.toString());
         closeResources();
-        generateSignalMessage("Пользователь отключён.");
+        room.generateMessage(user, "Пользователь отключён.", true);
     }
 }
