@@ -1,9 +1,8 @@
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReferenceArray;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 public class Room {
@@ -11,7 +10,7 @@ public class Room {
     private volatile int bufPos = 0;
     public final AtomicReferenceArray<Message> messageBuffer = new AtomicReferenceArray<>(MES_BUF_SIZE);
 
-    private List<ClientHandler> clientHandlers = new LinkedList<>();
+    private HashSet<ClientHandler> clientHandlers = new HashSet<>();
 
     private Thread queueChecker;
 
@@ -27,12 +26,13 @@ public class Room {
     public Room(String name, int queueLength, int maximumUsersAmount) {
         queue = new LinkedBlockingQueue<>(queueLength);
         //TODO corePoolSize may affect
-        threadPool = new ThreadPoolExecutor(0,
+        threadPool = new ThreadPoolExecutor(maximumUsersAmount,
                 maximumUsersAmount,
-                10,
+                2,
                 TimeUnit.MINUTES,
                 queue,
                 handler);
+        threadPool.allowCoreThreadTimeOut(true);
         queueChecker = new Thread(() -> {
             while (true) {
                 long start = System.currentTimeMillis();
@@ -41,12 +41,14 @@ public class Room {
                 while (it.hasNext()) {
                     ClientHandler handler = ((ClientHandler) it.next());
                     if (handler.getState() == Thread.State.NEW) {
-                        handler.sendQueueNum(queueNum++);
+                        if (!handler.sendQueueNum(queueNum++)) {
+                            it.remove();
+                        }
                     }
                 }
                 try {
                     Thread.sleep(start + 5000 - System.currentTimeMillis());
-                } catch (InterruptedException e) {
+                } catch (IllegalArgumentException | InterruptedException e) {
                     break;
                 }
             }
@@ -92,8 +94,16 @@ public class Room {
     }
 
     public void attachClientHandler(ClientHandler clientHandler) {
-        clientHandlers.add(clientHandler);
         threadPool.execute(clientHandler);
+        System.out.println(threadPool.getActiveCount());
+    }
+
+    public void addClientHandler(ClientHandler clientHandler) {
+        clientHandlers.add(clientHandler);
+    }
+
+    public void removeClientHandler(ClientHandler clientHandler) {
+        clientHandlers.remove(clientHandler);
     }
 
     public void shutDown() {

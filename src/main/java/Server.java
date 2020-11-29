@@ -4,6 +4,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,6 +28,7 @@ public class Server extends Thread {
     public Server(int port, int queueLength, String baseRoomName, int queueLengthForRoom, int maximumUsersAmount) {
         try {
             serverSocket = new ServerSocket(port, queueLength);
+            serverSocket.setSoTimeout(100);
         } catch (IOException e) {
             throw new IllegalArgumentException(e);
         }
@@ -41,10 +43,14 @@ public class Server extends Thread {
 
         while (!isInterrupted()) {
             Socket socket = null;
-            BufferedReader in = null;
-            PrintWriter out = null;
+            BufferedReader in;
+            PrintWriter out;
             try {
-                socket = serverSocket.accept();
+                try {
+                    socket = serverSocket.accept();
+                } catch (SocketTimeoutException e) {
+                    continue;
+                }
 
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 out = new PrintWriter(socket.getOutputStream(), true);
@@ -53,65 +59,41 @@ public class Server extends Thread {
 
                 String login = null;
                 String password = null;
-                String roomName = null;
 
-                while (!in.ready() || (login = in.readLine()) == null) {
-                    if (System.currentTimeMillis() - startTime > AUTH_TIMEOUT) {
-                        if (in.ready()) login = in.readLine();
-                        break;
-                    }
-                }
-                if (login == null) {
-                    out.println("Время ожидания аутентификации истекло.");
-                    throw new IOException("Время ожидания аутентификации истекло.");
-                }
-
-                while (!in.ready() || (password = in.readLine()) == null) {
-                    if (System.currentTimeMillis() - startTime > AUTH_TIMEOUT) {
-                        if (in.ready()) password = in.readLine();
-                        break;
+                while (System.currentTimeMillis() - startTime < AUTH_TIMEOUT) {
+                    if (in.ready()) {
+                        if (login == null) {
+                            login = in.readLine();
+                        } else {
+                            password = in.readLine();
+                            break;
+                        }
                     }
                 }
                 if (password == null) {
                     out.println("Время ожидания аутентификации истекло.");
                     throw new IOException("Время ожидания аутентификации истекло.");
                 }
+
                 //TODO attach database
                 if (!password.equals(database.get(login))) {
                     out.println("Неверные данные для входа.");
                     throw new IOException("Неверные данные для входа.");
                 }
+
                 out.println("Вы успешно авторизованы.");
 
                 out.println("Комнаты:");
                 for (Room room : rooms.values()) {
                     out.println("  " + room.getName() + " " + room.getUsersAmount() + "/" + room.getMaximumUsersAmount());
                 }
-
-                while (!in.ready() || (roomName = in.readLine()) == null) {
-                    if (System.currentTimeMillis() - startTime > AUTH_TIMEOUT) {
-                        if (in.ready()) roomName = in.readLine();
-                        break;
-                    }
-                }
-                (roomName == null ? defaultRoom : rooms.getOrDefault(roomName, defaultRoom)).attachClientHandler(new ClientHandler(new User(login), in, out, socket));
+                defaultRoom.attachClientHandler(new ClientHandler(defaultRoom, new User(login), in, out, socket));
             } catch (IOException e) {
                 e.printStackTrace();
-                if (out != null) {
-                    out.close();
-                }
-                if (in != null) {
-                    try {
-                        in.close();
-                    } catch (IOException e1) {
-                        e1.printStackTrace();
-                    }
-                }
                 if (socket != null) {
                     try {
                         socket.close();
-                    } catch (IOException e1) {
-                        e1.printStackTrace();
+                    } catch (IOException ignored) {
                     }
                 }
             }
@@ -119,8 +101,7 @@ public class Server extends Thread {
 
         try {
             serverSocket.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+        } catch (IOException ignored) {
         }
         for (String name : rooms.keySet()) {
             rooms.get(name).shutDown();

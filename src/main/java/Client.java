@@ -9,30 +9,10 @@ public class Client {
     private static Socket socket;
     private static PrintWriter out;
     private static BufferedReader in;
-    private static final int CONNECTION_TIMEOUT = 60_000;//ms
+    private static final int CONNECTION_TIMEOUT = 1_000;//ms
     private static final int SERVER_TIMEOUT = 10_000;//ms
 
     private static long serverTimeout;
-
-    private static void closeResources() {
-        if (out != null) {
-            out.close();
-        }
-        if (in != null) {
-            try {
-                in.close();
-            } catch (IOException e1) {
-                e1.printStackTrace();
-            }
-        }
-        if (socket != null) {
-            try {
-                socket.close();
-            } catch (IOException e1) {
-                e1.printStackTrace();
-            }
-        }
-    }
 
     public static void main(String args[]) {
         while (true) {
@@ -86,12 +66,17 @@ public class Client {
             } catch (IOException e) {
                 System.out.println("Не удалось подключится к серверу");
             } finally {
-                closeResources();
+                if (socket != null) {
+                    try {
+                        socket.close();
+                    } catch (IOException ignored) {
+                    }
+                }
             }
         }
     }
 
     public static void stop() {
-
+        //TODO
     }
 }

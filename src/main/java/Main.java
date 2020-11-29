@@ -8,9 +8,9 @@ public class Main{
         Scanner sc = new Scanner(System.in);
 
         String command;
-        while (!sc.hasNext() && !(command = sc.next()).equals("stop")){
+        while (!(command = sc.next()).equals("stop")){
             switch (command) {
-                case "new" -> server.addRoom(sc.next(), sc.nextInt(), sc.nextInt(), sc.hasNext() ? true : false);
+                case "new" -> server.addRoom(sc.next(), sc.nextInt(), sc.nextInt(), sc.nextBoolean());
                 case "close" -> server.closeRoom(sc.next());
             }
         }

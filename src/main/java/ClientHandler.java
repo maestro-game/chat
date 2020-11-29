@@ -3,14 +3,10 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Socket;
 import java.net.SocketException;
-import java.util.LinkedList;
-import java.util.List;
 
 public class ClientHandler extends Thread {
     private Room room;
     private int localBufPos;
-
-    private static List<ClientHandler> list = new LinkedList<>();
 
     private String closeMessage;
     private final BufferedReader in;
@@ -22,16 +18,22 @@ public class ClientHandler extends Thread {
         return user;
     }
 
-    public ClientHandler(User user, BufferedReader in, PrintWriter out, Socket socket) {
+    public Room getRoom() {
+        return room;
+    }
+
+    public ClientHandler(Room room, User user, BufferedReader in, PrintWriter out, Socket socket) {
         super("Thread-user-" + user.toString());
+        this.room = room;
         this.user = user;
         this.in = in;
         this.out = out;
         this.socket = socket;
     }
 
-    public void sendQueueNum(int num) {
+    public boolean sendQueueNum(int num) {
         out.println("Сервер полон. Ваша позиция в очереди: " + num);
+        return !out.checkError();
     }
 
     public void sendShutdownAndClose() {
@@ -41,7 +43,10 @@ public class ClientHandler extends Thread {
 
     public void sendQueueOverflow() {
         out.println("Сервер и очередь переполнена. Да, тут аншлаг)");
-        closeResources();
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
     }
 
     private void sendHistory() {
@@ -70,23 +75,10 @@ public class ClientHandler extends Thread {
         }
     }
 
-    private void closeResources() {
-        out.close();
-        try {
-            in.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        try {
-            socket.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
     @Override
     public void run() {
-        out.println("Добро пожаловать в чат!");
+        room.addClientHandler(this);
+        out.println("Добро пожаловать в " + room.getName());
         out.println("Пользователи:");
         for (User user : room.getUsers()) {
             out.println("  " + user.getUsername());
@@ -133,7 +125,11 @@ public class ClientHandler extends Thread {
             }
         }
         System.out.println("disconnected " + user.toString());
-        closeResources();
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+        }
         room.generateMessage(user, "Пользователь отключён.", true);
+        room.removeClientHandler(this);
     }
 }
